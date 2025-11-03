@@ -1,0 +1,48 @@
+services:
+  goapp:
+    container_name: goappdos
+    image: goappdos:1.0.0
+    build:
+      context: ./backend
+      dockerfile: go.dockerfile
+    environment:
+      DATABASE_URL: 'postgres://dbproyecto:dbproyecto@dbproyecto:5432/dbproyecto?sslmode=disable'
+    ports:
+      - '8000:8000'
+    depends_on:
+      - dbproyecto
+
+  nextapp:
+    container_name: nextappdos
+    image: nextappdos:1.0.0
+    build:
+      # Asume que el código de Next.js está en la carpeta ./frontend
+      context: ./frontend
+      # Asume que tu Dockerfile se llama 'Dockerfile' dentro de esa carpeta
+      dockerfile: next.dockerfile
+    ports:
+      - '3000:3000'
+    environment:
+      # ¡CRUCIAL! Esta variable le dice a Next.js cómo encontrar la API del backend.
+      # 'goapp' es el nombre del servicio del backend definido en este mismo archivo.
+      # Docker se encarga de resolver 'goapp' a la IP interna del contenedor.
+      NEXT_PUBLIC_API_URL: 'http://goapp:8000'
+    depends_on:
+      # Asegura que el backend 'goapp' se inicie antes que el frontend.
+      - goapp
+    restart: unless-stopped
+
+  dbproyectofinal:
+    container_name: dbProyectoSebas
+    image: postgres:13
+    environment:
+        POSTGRES_USER: dbproyecto
+        POSTGRES_PASSWORD: dbproyecto
+        POSTGRES_DB: dbproyecto
+    ports:
+        - 5432:5432
+    volumes:
+        - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata: {}
