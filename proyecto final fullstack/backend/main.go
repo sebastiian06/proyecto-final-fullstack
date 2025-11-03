@@ -6,68 +6,89 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/gorilla/mux"
 	_ "github.com/lib/pq"
 )
 
-// ORM (Object relational mapping)
-type User struct {
-	Id    int    `json:"id"`
-	Name  string `json:"name"`
-	Email string `json:"email"`
+type Proyecto struct {
+	ID            int       `json:"id"`
+	Nombre        string    `json:"nombre"`
+	Descripcion   string    `json:"descripcion"`
+	FechaCreacion time.Time `json:"fecha_creacion"`
 }
 
-// Función Principal
+type Tarea struct {
+	ID               int       `json:"id"`
+	DescripcionTarea string    `json:"descripcion_tarea"`
+	Estado           string    `json:"estado"`
+	FechaLimite      time.Time `json:"fecha_limite"`
+	ProyectoID       int       `json:"proyecto_id"`
+}
+
 func main() {
-	//Conectar a la base de datos
 	db, err := sql.Open("postgres", os.Getenv("DATABASE_URL"))
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer db.Close()
 
-	//Crear tabla si no existe
-	_, err = db.Exec("CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name TEXT, email TEXT)")
+	// Crear tablas si no existen
+	_, err = db.Exec(`
+        CREATE TABLE IF NOT EXISTS proyectos (
+            id SERIAL PRIMARY KEY,
+            nombre TEXT NOT NULL,
+            descripcion TEXT,
+            fecha_creacion TIMESTAMP DEFAULT NOW()
+        );
+        CREATE TABLE IF NOT EXISTS tareas (
+            id SERIAL PRIMARY KEY,
+            descripcion_tarea TEXT NOT NULL,
+            estado TEXT CHECK (estado IN ('Pendiente', 'En Progreso', 'Completada')) DEFAULT 'Pendiente',
+            fecha_limite DATE,
+            proyecto_id INT REFERENCES proyectos(id) ON DELETE CASCADE
+        );
+    `)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	//Crear router para endpoints
 	router := mux.NewRouter()
-	router.HandleFunc("/api/go/users", getUsers(db)).Methods("GET")
-	router.HandleFunc("/api/go/users", createUser(db)).Methods("POST")
-	router.HandleFunc("/api/go/users/{id}", getUser(db)).Methods("GET")
-	router.HandleFunc("/api/go/users/{id}", updateUser(db)).Methods("PUT")
-	router.HandleFunc("/api/go/users/{id}", deleteUser(db)).Methods("DELETE")
 
-	//Ajustar Problema del CORS y el contenido JSON middlewares
+	// Rutas de proyectos
+	router.HandleFunc("/api/go/proyectos", getProyectos(db)).Methods("GET")
+	router.HandleFunc("/api/go/proyectos", createProyecto(db)).Methods("POST")
+	router.HandleFunc("/api/go/proyectos/{id}", getProyecto(db)).Methods("GET")
+	router.HandleFunc("/api/go/proyectos/{id}", updateProyecto(db)).Methods("PUT")
+	router.HandleFunc("/api/go/proyectos/{id}", deleteProyecto(db)).Methods("DELETE")
+
+	// Rutas de tareas
+	router.HandleFunc("/api/go/tareas", getTareas(db)).Methods("GET")
+	router.HandleFunc("/api/go/tareas", createTarea(db)).Methods("POST")
+	router.HandleFunc("/api/go/tareas/{id}", getTarea(db)).Methods("GET")
+	router.HandleFunc("/api/go/tareas/{id}", updateTarea(db)).Methods("PUT")
+	router.HandleFunc("/api/go/tareas/{id}", deleteTarea(db)).Methods("DELETE")
+
 	enhancedRouter := enableCORS(jsonContentTypeMiddleware(router))
-
-	//Arrancar el servidor
+	log.Println("Servidor corriendo en puerto 8000")
 	log.Fatal(http.ListenAndServe(":8000", enhancedRouter))
 }
 
-// Funcion de EnableCors
+// ---------- Middlewares ----------
 func enableCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		//inicir el CORS Headers
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
-		//Verificar si la petición del request funciona
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-
-		//Pasar la petición al siguiente middleware o finalizarla
 		next.ServeHTTP(w, r)
 	})
 }
 
-// Seteo de los objetos a formato JSON
 func jsonContentTypeMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -75,106 +96,149 @@ func jsonContentTypeMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// Función Todos los usuarios
-func getUsers(db *sql.DB) http.HandlerFunc {
+// ---------- CRUD Proyectos ----------
+func getProyectos(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		rows, err := db.Query("SELECT * FROM users")
+		rows, err := db.Query("SELECT id, nombre, descripcion, fecha_creacion FROM proyectos ORDER BY id DESC")
 		if err != nil {
 			log.Fatal(err)
 		}
 		defer rows.Close()
 
-		users := []User{}
+		var proyectos []Proyecto
 		for rows.Next() {
-			var u User
-			if err := rows.Scan(&u.Id, &u.Name, &u.Email); err != nil {
-				log.Fatal(err)
-			}
-			users = append(users, u)
+			var p Proyecto
+			rows.Scan(&p.ID, &p.Nombre, &p.Descripcion, &p.FechaCreacion)
+			proyectos = append(proyectos, p)
 		}
-		if err := rows.Err(); err != nil {
-			log.Fatal(err)
-		}
-		json.NewEncoder(w).Encode(users)
+		json.NewEncoder(w).Encode(proyectos)
 	}
 }
 
-// Usuario por Id
-func getUser(db *sql.DB) http.HandlerFunc {
+func createProyecto(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var p Proyecto
+		json.NewDecoder(r.Body).Decode(&p)
+		err := db.QueryRow("INSERT INTO proyectos (nombre, descripcion) VALUES ($1, $2) RETURNING id, fecha_creacion",
+			p.Nombre, p.Descripcion).Scan(&p.ID, &p.FechaCreacion)
+		if err != nil {
+			log.Fatal(err)
+		}
+		json.NewEncoder(w).Encode(p)
+	}
+}
+
+func getProyecto(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		id := vars["id"]
-
-		var u User
-		err := db.QueryRow("SELECT * FROM users WHERE id = $1", id).Scan(&u.Id, &u.Name, &u.Email)
+		var p Proyecto
+		err := db.QueryRow("SELECT id, nombre, descripcion, fecha_creacion FROM proyectos WHERE id=$1", id).
+			Scan(&p.ID, &p.Nombre, &p.Descripcion, &p.FechaCreacion)
 		if err != nil {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-
-		json.NewEncoder(w).Encode(u)
+		json.NewEncoder(w).Encode(p)
 	}
 }
 
-// Crear Usuario
-func createUser(db *sql.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var u User
-		json.NewDecoder(r.Body).Decode(&u)
-
-		err := db.QueryRow("INSERT INTO users (name, email) VALUES ($1, $2) RETURNING id", u.Name, u.Email).Scan(&u.Id)
-		if err != nil {
-			log.Fatal(err)
-		}
-		json.NewEncoder(w).Encode(u)
-	}
-}
-
-// Actualizar Usuario
-func updateUser(db *sql.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var u User
-		json.NewDecoder(r.Body).Decode(&u)
-
-		vars := mux.Vars(r)
-		id := vars["id"]
-
-		//Actualizar los datos
-		_, err := db.Exec("UPDATE users SET name = $1, email = $2 WHERE id= $3", u.Name, u.Email, id)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		//Devolver el dato actualizado de la base de datos
-		var updatedUser User
-		err = db.QueryRow("SELECT id, name, email FROM users WHERE id = $1", id).Scan(&updatedUser.Id, &updatedUser.Name, &updatedUser.Email)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		//Enviar el dato actualizado en la respuesta
-		json.NewEncoder(w).Encode(updatedUser)
-	}
-}
-
-// ELiminar el usuario
-func deleteUser(db *sql.DB) http.HandlerFunc {
+func updateProyecto(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		id := vars["id"]
+		var p Proyecto
+		json.NewDecoder(r.Body).Decode(&p)
+		_, err := db.Exec("UPDATE proyectos SET nombre=$1, descripcion=$2 WHERE id=$3", p.Nombre, p.Descripcion, id)
+		if err != nil {
+			log.Fatal(err)
+		}
+		getProyecto(db)(w, r)
+	}
+}
 
-		var u User
-		err := db.QueryRow("SELECT * FROM users WHERE id= $1", id).Scan(&u.Id, &u.Name, &u.Email)
+func deleteProyecto(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		id := vars["id"]
+		_, err := db.Exec("DELETE FROM proyectos WHERE id=$1", id)
+		if err != nil {
+			log.Fatal(err)
+		}
+		json.NewEncoder(w).Encode(map[string]string{"mensaje": "Proyecto eliminado"})
+	}
+}
+
+// ---------- CRUD Tareas ----------
+func getTareas(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		rows, err := db.Query("SELECT id, descripcion_tarea, estado, fecha_limite, proyecto_id FROM tareas ORDER BY id DESC")
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer rows.Close()
+
+		var tareas []Tarea
+		for rows.Next() {
+			var t Tarea
+			rows.Scan(&t.ID, &t.DescripcionTarea, &t.Estado, &t.FechaLimite, &t.ProyectoID)
+			tareas = append(tareas, t)
+		}
+		json.NewEncoder(w).Encode(tareas)
+	}
+}
+
+func createTarea(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var t Tarea
+		json.NewDecoder(r.Body).Decode(&t)
+		err := db.QueryRow("INSERT INTO tareas (descripcion_tarea, estado, fecha_limite, proyecto_id) VALUES ($1, $2, $3, $4) RETURNING id",
+			t.DescripcionTarea, t.Estado, t.FechaLimite, t.ProyectoID).Scan(&t.ID)
+		if err != nil {
+			log.Fatal(err)
+		}
+		json.NewEncoder(w).Encode(t)
+	}
+}
+
+func getTarea(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		id := vars["id"]
+		var t Tarea
+		err := db.QueryRow("SELECT id, descripcion_tarea, estado, fecha_limite, proyecto_id FROM tareas WHERE id=$1", id).
+			Scan(&t.ID, &t.DescripcionTarea, &t.Estado, &t.FechaLimite, &t.ProyectoID)
 		if err != nil {
 			w.WriteHeader(http.StatusNotFound)
 			return
-		} else {
-			_, err := db.Exec("DELETE FROM users WHERE id = $1", id)
-			if err != nil {
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			json.NewEncoder(w).Encode("Usuario Eliminado")
 		}
+		json.NewEncoder(w).Encode(t)
+	}
+}
+
+func updateTarea(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		id := vars["id"]
+		var t Tarea
+		json.NewDecoder(r.Body).Decode(&t)
+		_, err := db.Exec("UPDATE tareas SET descripcion_tarea=$1, estado=$2, fecha_limite=$3, proyecto_id=$4 WHERE id=$5",
+			t.DescripcionTarea, t.Estado, t.FechaLimite, t.ProyectoID, id)
+		if err != nil {
+			log.Fatal(err)
+		}
+		getTarea(db)(w, r)
+	}
+}
+
+func deleteTarea(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		id := vars["id"]
+		_, err := db.Exec("DELETE FROM tareas WHERE id=$1", id)
+		if err != nil {
+			log.Fatal(err)
+		}
+		json.NewEncoder(w).Encode(map[string]string{"mensaje": "Tarea eliminada"})
 	}
 }
