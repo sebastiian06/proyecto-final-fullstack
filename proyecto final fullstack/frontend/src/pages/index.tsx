@@ -1,29 +1,14 @@
-import React, { useState } from "react";
-import ProjectInterface from "./components/ProjectInterface";
-import TaskInterface from "./components/TaskInterface";
-import { Button } from "@/components/ui/button";
+import React from 'react';
+import ProyectoInterface from '../components/ProyectoInterface';
 
-export default function App() {
-  const [view, setView] = useState<"proyectos" | "tareas">("proyectos");
-
+const Home: React.FC = () => {
   return (
-    <div className="p-6">
-      <div className="flex gap-4 mb-6">
-        <Button
-          onClick={() => setView("proyectos")}
-          variant={view === "proyectos" ? "default" : "outline"}
-        >
-          Proyectos
-        </Button>
-        <Button
-          onClick={() => setView("tareas")}
-          variant={view === "tareas" ? "default" : "outline"}
-        >
-          Tareas
-        </Button>
+    <main className="flex flex-wrap justify-center items-start min-h-screen bg-gray-100">
+      <div className="m-4">
+        <ProyectoInterface backendName="go" />
       </div>
-
-      {view === "proyectos" ? <ProjectInterface /> : <TaskInterface />}
-    </div>
+    </main>
   );
 }
+
+export default Home;
